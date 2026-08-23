@@ -4,12 +4,14 @@ import type {
   Limits,
   Metric,
   ProviderConfig,
+  QuotaAnchor,
   ReportedQuota,
   Reservation,
   StateStore,
   WindowKind,
-} from "./types.js";
-import { msUntilWindowEnd, windowKey, windowTtlMs } from "./util.js";
+} from "../types/index.js";
+import { msUntilWindowEnd, windowKey, windowTtlMs } from "../utils/index.js";
+import { estimateNeurons } from "./tokens.js";
 
 /** How long a reported/mined anchor is trusted before falling back to estimates. */
 const ANCHOR_TTL_MS: Record<"reported" | "mined", number> = {
@@ -17,35 +19,13 @@ const ANCHOR_TTL_MS: Record<"reported" | "mined", number> = {
   mined: 300_000,
 };
 
-interface Anchor {
-  /** Remaining budget the provider disclosed. */
-  remaining: number;
-  /** Local counter value at the moment of disclosure. */
-  atCount: number;
-  ts: number;
-  source: "reported" | "mined";
-}
-
 const WINDOWS: WindowKind[] = ["sec", "min", "day", "month"];
 
 /**
- * The quota ledger.
- *
- * Provider abstraction is commodity. Knowing how much free capacity remains
- * across providers you personally own — before spending a request to find out —
- * is the product. This class is that.
- *
- * Three sources, ranked:
- *   reported  ← response headers, or a quota endpoint   (trust: high)
- *   mined     ← parsed out of a 429 body                (trust: high)
- *   estimated ← local counter vs seed limits            (trust: low, always available)
- *
- * The sources COMPOSE rather than replace each other. A reported value is an
- * anchor: `remaining` at a known local count. Live headroom is then
- * `anchor.remaining - (currentLocalCount - anchor.atCount)`. When the anchor
- * ages out, the ledger falls back to pure local counting against seed limits.
- * This is why local counting is the floor and reported values are the upgrade,
- * never the reverse — the ledger must work with zero published data.
+ * Quota ledger. Sources rank reported > mined > estimated and compose: a
+ * reported value anchors `remaining` at a known local count, so live headroom
+ * is `anchor.remaining - (localCount - anchor.atCount)`. Local counting is the
+ * floor — the ledger must work with zero published data.
  */
 export class Ledger {
   constructor(
@@ -54,9 +34,8 @@ export class Ledger {
   ) {}
 
   private scopeId(provider: ProviderConfig): string {
-    // Scope is NOT "API key". Groq bills per organization, Gemini per project,
-    // Cloudflare per account, GitHub per user. Keying by key double-counts
-    // headroom that does not exist.
+    // Not "API key": Groq bills per org, Gemini per project. Keying by key
+    // double-counts headroom that does not exist.
     return this.scopeIds.get(provider.id) ?? provider.id;
   }
 
@@ -81,11 +60,7 @@ export class Ledger {
     return `a:${this.scopeId(provider)}:${provider.id}:${model}:${kind}:${metric}`;
   }
 
-  /**
-   * Some limits are per-model, some are account-wide. Groq's RPD is per-model;
-   * Cohere's monthly cap and Cloudflare's neuron pool are shared across all of
-   * them. Getting this wrong either over- or under-counts by the model count.
-   */
+  /** Some limits are per-model (Groq RPD), some account-wide (Cohere, Cloudflare). */
   private modelScope(provider: ProviderConfig, kind: WindowKind, modelId: string): string {
     if (kind === "month") return "*";
     if (provider.id === "cloudflare") return "*";
@@ -139,11 +114,11 @@ export class Ledger {
     modelId: string,
     kind: WindowKind,
     metric: Metric,
-  ): Promise<Anchor | undefined> {
+  ): Promise<QuotaAnchor | undefined> {
     const raw = await this.store.get(this.anchorKey(provider, modelId, kind, metric));
     if (!raw) return undefined;
     try {
-      const a = JSON.parse(raw) as Anchor;
+      const a = JSON.parse(raw) as QuotaAnchor;
       if (Date.now() - a.ts > ANCHOR_TTL_MS[a.source]) return undefined;
       return a;
     } catch {
@@ -163,11 +138,8 @@ export class Ledger {
   }
 
   /**
-   * Current headroom across every window the provider meters.
-   *
-   * A window is only reported when a limit is known for it. An absent entry
-   * means "unknown or unlimited", which the selector treats as passable — the
-   * alternative would drop NVIDIA (no daily cap) entirely.
+   * Headroom per metered window. An absent entry means unknown/unlimited and
+   * the selector treats it as passable (NVIDIA has no daily cap).
    */
   async headroom(
     provider: ProviderConfig,
@@ -189,8 +161,7 @@ export class Ledger {
         let remaining: number | undefined;
 
         if (anchor) {
-          // Anchor + delta: trust the provider's disclosed number, then subtract
-          // everything counted locally since it was disclosed.
+          // Trust the disclosed number, minus everything counted since.
           const delta = Math.max(0, local - anchor.atCount);
           remaining = Math.max(0, anchor.remaining - delta);
           if (rank[anchor.source] > rank[bestSource]) bestSource = anchor.source;
@@ -211,8 +182,8 @@ export class Ledger {
       }
     }
 
-    // Cloudflare is neuron-denominated. Surface it on the request axis so the
-    // selector can gate on it without pretending neurons are requests.
+    // Cloudflare is neuron-denominated; gate on the request axis without
+    // pretending neurons are requests.
     if (provider.defaultLimits.default?.neuronsPerDay !== undefined) {
       const anchor = await this.readAnchor(provider, modelId, "day", "neurons");
       const local = await this.count(provider, modelId, "day", "neurons", now);
@@ -240,12 +211,8 @@ export class Ledger {
   }
 
   /**
-   * Reserve capacity BEFORE sending.
-   *
-   * Without a pre-send reservation, N parallel calls all read the same headroom
-   * and blow through the limit together. The reservation is committed with the
-   * real token count on success, or rolled back if the request never reached
-   * the provider's meter.
+   * Reserve capacity BEFORE sending, else N parallel calls read the same
+   * headroom and blow the limit together. Commit or roll back afterwards.
    */
   async reserve(
     provider: ProviderConfig,
@@ -270,7 +237,6 @@ export class Ledger {
 
     if (provider.defaultLimits.default?.neuronsPerDay !== undefined) {
       const k = this.counterKey(provider, modelId, "day", "neurons", now);
-      const { estimateNeurons } = await import("./tokens.js");
       await this.store.incr(k, estimateNeurons(modelId, estTokens), windowTtlMs("day"));
       keys.push(`neurons:day:${k}`);
     }
@@ -302,11 +268,8 @@ export class Ledger {
   }
 
   /**
-   * Undo a reservation for a request that never reached the provider's meter.
-   *
-   * Only network and timeout failures qualify. A 429 or a 400 DID consume the
-   * provider's counter, and rolling those back would strand quota by making the
-   * ledger believe capacity exists that the provider has already spent.
+   * Undo a reservation the provider never metered — network/timeout only.
+   * A 429 or 400 DID consume their counter; rolling those back strands quota.
    */
   async rollback(res: Reservation): Promise<void> {
     if (res.released) return;
@@ -319,12 +282,7 @@ export class Ledger {
     }
   }
 
-  /**
-   * Record a provider's own disclosure as a new anchor.
-   *
-   * Called on every response, success AND failure — the headers are equally
-   * truthful either way, and harvesting them costs nothing.
-   */
+  /** Record a disclosure as a new anchor. Called on success AND failure. */
   async ingest(
     provider: ProviderConfig,
     modelId: string,
@@ -338,7 +296,7 @@ export class Ledger {
     ): Promise<void> => {
       if (remaining === undefined) return;
       const atCount = await this.count(provider, modelId, kind, metric, now);
-      const anchor: Anchor = { remaining, atCount, ts: Date.now(), source: q.source };
+      const anchor: QuotaAnchor = { remaining, atCount, ts: Date.now(), source: q.source };
       await this.store.set(
         this.anchorKey(provider, modelId, kind, metric),
         JSON.stringify(anchor),
@@ -359,7 +317,7 @@ export class Ledger {
     kind: WindowKind,
     now = new Date(),
   ): Promise<void> {
-    const anchor: Anchor = {
+    const anchor: QuotaAnchor = {
       remaining: 0,
       atCount: await this.count(provider, modelId, kind, "req", now),
       ts: Date.now(),

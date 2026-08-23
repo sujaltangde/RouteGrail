@@ -4,35 +4,23 @@ import {
   classifyThrown,
   consumesQuota,
   cooldownMs,
-  type ErrorClass,
   shouldCascade,
-} from "./errors.js";
-import { harvestHeaders, mine429 } from "./harvester.js";
-import type { Ledger } from "./ledger.js";
-import type { Route } from "./selector.js";
-import type { ProviderRuntime } from "./selector.js";
-import { estimateRequestTokens } from "./tokens.js";
-import { isFailure, type Credentials, OpenAITransport } from "./transport/openai.js";
+} from "../errors/index.js";
+import { harvestHeaders, mine429 } from "../quota/harvester.js";
+import { estimateRequestTokens } from "../quota/tokens.js";
+import { isFailure } from "../transport/openai.js";
 import type {
   AttemptRecord,
+  ErrorClass,
+  ExecutorDeps,
   GenerateRequest,
   GenerateResponse,
   ProviderConfig,
+  ProviderRuntime,
+  Route,
   Skipped,
-  StateStore,
-} from "./types.js";
-import { ewma } from "./util.js";
-
-export interface ExecutorDeps {
-  transport: OpenAITransport;
-  ledger: Ledger;
-  store: StateStore;
-  credentials: Map<string, Credentials>;
-  runtime: Map<string, ProviderRuntime>;
-  onModelNotFound: (providerId: string) => Promise<void>;
-  onAffinity: (sessionId: string, family: string) => Promise<void>;
-  log: (level: "debug" | "info" | "warn" | "error", msg: string, meta?: unknown) => void;
-}
+} from "../types/index.js";
+import { ewma } from "../utils/index.js";
 
 export class Executor {
   constructor(private readonly deps: ExecutorDeps) {}
@@ -57,12 +45,7 @@ export class Executor {
     await this.deps.store.release(`sem:${provider.id}`);
   }
 
-  /**
-   * Ingest whatever the provider disclosed on this response.
-   *
-   * Done on success AND failure. Headers are equally truthful either way, and
-   * harvesting them costs nothing — no probe request is ever needed.
-   */
+  /** Ingest whatever the provider disclosed. Runs on success AND failure. */
   private async harvest(
     provider: ProviderConfig,
     modelId: string,
@@ -110,11 +93,8 @@ export class Executor {
   }
 
   /**
-   * Run the attempt loop.
-   *
-   * Hard cap on attempts. Every attempt reserves quota before sending and
-   * either commits it with real usage or rolls it back if the request never
-   * reached the provider's meter.
+   * Run the attempt loop. Every attempt reserves quota before sending, then
+   * commits it with real usage or rolls it back if the provider never metered it.
    */
   async run(
     request: GenerateRequest,
@@ -176,9 +156,8 @@ export class Executor {
             status: res.status,
           });
 
-          // A malformed request is the caller's problem, not a capacity problem.
-          // Cascading it through a dozen providers burns a dozen quotas to
-          // produce the same error a dozen times.
+          // A malformed request is the caller's problem, not a capacity one —
+          // cascading it burns a dozen quotas for the same error.
           if (!shouldCascade(cls)) break;
           continue;
         }

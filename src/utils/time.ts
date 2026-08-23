@@ -1,4 +1,4 @@
-import type { ProviderConfig, WindowKind } from "./types.js";
+import type { ProviderConfig, WindowKind } from "../types/index.js";
 
 /** Format a Date as YYYY-MM-DD in an arbitrary IANA timezone. */
 export function dateInTz(d: Date, tz: string): string {
@@ -16,11 +16,9 @@ export function monthInTz(d: Date, tz: string): string {
 }
 
 /**
- * Build the window portion of a ledger key.
- *
- * Four window types, because the qualified provider set demands it:
- * Mistral is per-second and per-month, Cohere is per-month, and daily windows
- * roll over in the provider's own timezone (Gemini is midnight Pacific).
+ * Window portion of a ledger key. Four kinds because the providers demand it —
+ * Mistral meters per second and per month, and daily windows roll over in the
+ * provider's own timezone (Gemini is midnight Pacific).
  */
 export function windowKey(kind: WindowKind, provider: ProviderConfig, now = new Date()): string {
   switch (kind) {
@@ -124,30 +122,6 @@ export function parseDuration(s: string): number | undefined {
     }
   }
   return matched ? Math.round(total) : undefined;
-}
-
-export function toNum(v: string | null | undefined): number | undefined {
-  if (v == null) return undefined;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : undefined;
-}
-
-export function joinUrl(base: string, path: string): string {
-  return `${base.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
-}
-
-/** Substitute {accountId} style placeholders in a base URL. */
-export function renderBaseUrl(baseUrl: string, vars: Record<string, string | undefined>): string {
-  return baseUrl.replace(/\{(\w+)\}/g, (full, key: string) => vars[key] ?? full);
-}
-
-export function clamp(n: number, lo: number, hi: number): number {
-  return Math.max(lo, Math.min(hi, n));
-}
-
-/** Exponentially weighted moving average. */
-export function ewma(prev: number | undefined, next: number, alpha = 0.3): number {
-  return prev === undefined ? next : alpha * next + (1 - alpha) * prev;
 }
 
 export function nowIso(): string {

@@ -1,12 +1,9 @@
-import type { Family, Tier } from "./types.js";
+import type { Family, Tier } from "../types/index.js";
 
 /**
- * Canonical model families.
- *
- * The same weights appear on six providers under six different ID strings.
- * Ranking FAMILIES rather than model IDs means fallback is "same model,
- * different provider" instead of "worse model" — the difference between
- * graceful failover and visible quality collapse.
+ * Canonical model families. The same weights appear on six providers under six
+ * ID strings; ranking families makes fallback "same model, different provider"
+ * rather than "worse model".
  */
 export const FAMILIES: Family[] = [
   {
@@ -133,10 +130,8 @@ export function tierRank(t: Tier): number {
 }
 
 /**
- * Map a provider-native model ID onto a canonical family.
- *
- * Unknown models get a conservative `balanced` default rather than being
- * dropped — dropping means new models stay invisible until the next release.
+ * Map a provider-native model ID onto a canonical family. Unknown models get a
+ * `balanced` default rather than being dropped.
  */
 export function resolveFamily(
   modelId: string,

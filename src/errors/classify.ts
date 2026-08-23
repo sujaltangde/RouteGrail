@@ -1,73 +1,4 @@
-import type { AttemptRecord, Skipped } from "./types.js";
-
-export type ErrorClass =
-  | "RATE_LIMITED"
-  | "QUOTA_EXHAUSTED"
-  | "AUTH"
-  | "REGION_BLOCKED"
-  | "CONTEXT_LENGTH_EXCEEDED"
-  | "INVALID_REQUEST"
-  | "MODEL_NOT_FOUND"
-  | "SERVER"
-  | "TIMEOUT"
-  | "NETWORK"
-  | "UNKNOWN";
-
-export class RouteGrailError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "RouteGrailError";
-  }
-}
-
-export class ProviderError extends RouteGrailError {
-  constructor(
-    public readonly provider: string,
-    public readonly model: string,
-    public readonly errorClass: ErrorClass,
-    public readonly status: number | undefined,
-    message: string,
-    public readonly retryAfterMs?: number,
-    public readonly body?: string,
-  ) {
-    super(`[${provider}/${model}] ${errorClass}: ${message}`);
-    this.name = "ProviderError";
-  }
-}
-
-export class AllProvidersFailedError extends RouteGrailError {
-  constructor(
-    public readonly trail: AttemptRecord[],
-    public readonly skipped: Skipped[],
-  ) {
-    const attempted = trail.length
-      ? trail.map((a) => `${a.provider}/${a.model} → ${a.errorClass ?? "?"}`).join("; ")
-      : "no provider was eligible";
-    super(
-      `All providers failed. Attempted: ${attempted}. ` +
-        `Skipped ${skipped.length} route(s). Inspect .trail and .skipped for detail.`,
-    );
-    this.name = "AllProvidersFailedError";
-  }
-}
-
-export class NoRouteError extends RouteGrailError {
-  constructor(public readonly skipped: Skipped[], detail: string) {
-    super(`No eligible route: ${detail}`);
-    this.name = "NoRouteError";
-  }
-}
-
-export class ConfigError extends RouteGrailError {
-  constructor(message: string) {
-    super(message);
-    this.name = "ConfigError";
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Classification
-// ---------------------------------------------------------------------------
+import type { ErrorClass } from "../types/index.js";
 
 const CONTEXT_PATTERNS = [
   /context[_ -]?length/i,
@@ -100,11 +31,9 @@ const QUOTA_PATTERNS = [
 ];
 
 /**
- * Classify an HTTP failure into a routing action.
- *
- * The important branch is CONTEXT_LENGTH_EXCEEDED. Providers return oversized
- * prompts as a 400, and a naive "400 means stop" rule would halt the loop when
- * the correct action is to try a provider with a larger cap.
+ * Classify an HTTP failure into a routing action. The load-bearing branch is
+ * CONTEXT_LENGTH_EXCEEDED: providers return oversized prompts as a 400, so a
+ * naive "400 means stop" rule halts a loop that should try a bigger provider.
  */
 export function classifyHttp(status: number, body: string): ErrorClass {
   const matches = (pats: RegExp[]) => pats.some((p) => p.test(body));
@@ -154,15 +83,13 @@ export function classifyThrown(err: unknown): ErrorClass {
 
 /** Should the executor try the next route, or stop the whole loop? */
 export function shouldCascade(cls: ErrorClass): boolean {
-  // INVALID_REQUEST means the caller's request is malformed. Cascading it
-  // through a dozen providers burns a dozen quotas to produce the same error.
+  // A malformed request would fail identically everywhere; don't spend quota.
   return cls !== "INVALID_REQUEST";
 }
 
 /** Should the request be re-counted against the provider's quota despite failing? */
 export function consumesQuota(cls: ErrorClass): boolean {
-  // Rate-limited and quota errors mean the provider *did* count the attempt.
-  // Network and timeout failures never reached the provider's meter.
+  // 429s were counted by the provider; network/timeout never reached it.
   switch (cls) {
     case "NETWORK":
     case "TIMEOUT":

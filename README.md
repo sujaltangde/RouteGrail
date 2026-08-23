@@ -144,7 +144,7 @@ Off by default: you haven't consented to sending prompts to a provider you never
 ### `new Router(config?)`
 
 ```ts
-interface RouterConfig {
+type RouterConfig = {
   providers?: Record<string, { apiKey?: string; accountId?: string }>; // omit = read env
   mode?: "development" | "production";  // production filters ToS-restricted tiers
   keylessFallback?: boolean;            // default false
@@ -157,7 +157,7 @@ interface RouterConfig {
   registry?: ProviderConfig[];          // replace/extend the bundled registry
   discoveryTtlMs?: number;              // default 24h
   logger?: (level, msg, meta?) => void;
-}
+};
 ```
 
 Every provider is optional. The router works with one key and improves with each one you add. Discovery starts in the background — the constructor never blocks on it.
@@ -238,14 +238,14 @@ import { NoRouteError, AllProvidersFailedError } from "routegrail";
 The default `MemoryStore` is per-process. On Lambda, Vercel or multiple containers, every instance independently rediscovers limits via 429s. Implement `StateStore` against Redis:
 
 ```ts
-interface StateStore {
+type StateStore = {
   get(key: string): Promise<string | null>;
   set(key: string, value: string, ttlMs: number): Promise<void>;
   incr(key: string, by: number, ttlMs: number): Promise<number>;
   del(key: string): Promise<void>;
   acquire(key: string, max: number): Promise<boolean>;  // Z.ai semaphore
   release(key: string): Promise<void>;
-}
+};
 ```
 
 Selection is async throughout so this seam costs nothing to use.
@@ -259,19 +259,6 @@ Selection is async throughout so this seam costs nothing to use.
 With all Tier 1 keys configured, outside the EU: roughly **3,000–6,000 requests/day**, plus NVIDIA's uncapped daily allowance and Mistral's ~1B monthly token budget.
 
 Treat that as nominal, not achievable in a burst — per-minute limits bind long before daily ones. Groq's daily allowance at 30 RPM would need hours of continuous saturation to exhaust. The honest claim is that a solo developer doing normal work essentially never hits a wall, which is a different statement from a big number in a table.
-
----
-
-## Testing
-
-```bash
-npm run selftest    # or: yarn selftest / pnpm selftest
-npm run e2etest     # or: yarn e2etest / pnpm e2etest
-```
-
-64 offline assertions (header dialects, ledger math, taxonomy) and 46 mocked-HTTP assertions (failover, 400 rule, streaming, exhaustion).
-
-The suites deliberately cover the things that are cheap to get wrong and expensive to ship wrong: Groq's inverted header naming, anchor+delta reconciliation, rollback idempotency, Pacific-vs-UTC window rollover, the free-model filter, and the 400-vs-context-length split.
 
 ---
 

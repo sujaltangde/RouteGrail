@@ -1,21 +1,18 @@
-import { isChatModel, resolveFamily } from "./families.js";
-import { isFailure, type CatalogEntry, type Credentials, OpenAITransport } from "./transport/openai.js";
-import type { DiscoveredModel, ProviderConfig, StateStore } from "./types.js";
-
-export interface DiscoveryResult {
-  models: DiscoveredModel[];
-  /** Set when the provider must be taken out of rotation for this session. */
-  disabled?: { reason: string };
-  degraded?: boolean;
-}
+import { isChatModel, resolveFamily } from "../providers/families.js";
+import { isFailure, OpenAITransport } from "../transport/openai.js";
+import type {
+  CatalogEntry,
+  Credentials,
+  DiscoveredModel,
+  DiscoveryResult,
+  ProviderConfig,
+  StateStore,
+} from "../types/index.js";
 
 /**
- * Reduce a provider's catalog to models that genuinely cost nothing.
- *
- * This is the single most important safety filter in the SDK. OpenRouter's
- * catalog is ~370 models of which roughly 20 are free; without this, a router
- * "for free tiers" will quietly spend the user's credit balance. SiliconFlow
- * and Z.ai have the same shape at smaller scale.
+ * Reduce a catalog to models that genuinely cost nothing. The key safety
+ * filter: ~20 of OpenRouter's ~370 models are free, and without this the
+ * router quietly spends the user's credit balance.
  */
 export function filterFree(provider: ProviderConfig, entries: CatalogEntry[]): CatalogEntry[] {
   const f = provider.freeFilter;
@@ -70,12 +67,9 @@ export class Discovery {
   }
 
   /**
-   * Discover a provider's usable models.
-   *
-   * One catalog request does three jobs at once: it validates the key, returns
-   * real model IDs (never hardcoded — free-tier lineups rotate constantly and a
-   * stale models.ts produces 404s that look like outages), and yields context
-   * windows for free.
+   * Discover a provider's usable models. One catalog request validates the key,
+   * returns live model IDs (lineups rotate; hardcoding produces 404s that look
+   * like outages) and yields context windows.
    */
   async discover(provider: ProviderConfig, creds: Credentials): Promise<DiscoveryResult> {
     const cached = await this.store.get(this.cacheKey(provider.id));
@@ -117,7 +111,7 @@ export class Discovery {
         return { models, degraded: true };
       }
       raw = res;
-    } catch (err) {
+    } catch {
       const models = this.fromStatic(provider);
       return { models, degraded: true };
     }
@@ -136,8 +130,7 @@ export class Discovery {
         };
       });
 
-    // A catalog that filters down to nothing is not an error, but the provider
-    // has nothing to offer this session.
+    // Filtering down to nothing is not an error, just an empty provider.
     const final = models.length > 0 ? models : this.fromStatic(provider);
     await this.store.set(this.cacheKey(provider.id), JSON.stringify(final), this.ttlMs);
     return { models: final };

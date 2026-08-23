@@ -1,36 +1,17 @@
-import type { GenerateRequest, ProviderConfig } from "../types.js";
-import { joinUrl, renderBaseUrl } from "../util.js";
-
-export interface Credentials {
-  apiKey?: string;
-  accountId?: string;
-}
-
-export interface ChatResult {
-  text: string;
-  usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
-  headers: Headers;
-  raw: unknown;
-}
-
-export interface HttpFailure {
-  ok: false;
-  status: number;
-  body: string;
-  headers: Headers;
-}
-
-export interface CatalogEntry {
-  id: string;
-  contextWindow?: number;
-  /** Present on OpenRouter; used to prove a model costs nothing. */
-  pricing?: { prompt?: string; completion?: string };
-}
+import type {
+  CatalogEntry,
+  ChatResult,
+  Credentials,
+  GenerateRequest,
+  HttpFailure,
+  ProviderConfig,
+  StreamMeta,
+} from "../types/index.js";
+import { joinUrl, renderBaseUrl } from "../utils/index.js";
 
 /**
- * Every provider in the registry speaks the OpenAI chat-completions shape —
- * including Cloudflare Workers AI (via /accounts/{id}/ai/v1) and Cohere
- * (via its Compatibility API). One transport covers all of them.
+ * Every registry provider speaks the OpenAI chat-completions shape, including
+ * Cloudflare Workers AI and Cohere. One transport covers all of them.
  */
 export class OpenAITransport {
   constructor(private readonly timeoutMs: number) {}
@@ -65,8 +46,7 @@ export class OpenAITransport {
     if (req.system) messages.push({ role: "system", content: req.system });
     messages.push({ role: "user", content: req.prompt });
 
-    // Respect hard per-request output caps (GitHub Models: 4K out) even when
-    // the caller asked for more.
+    // Respect hard output caps (GitHub Models: 4K) over the caller's ask.
     let maxTokens = req.maxTokens;
     const cap = provider.perRequestCaps?.maxOutput;
     if (cap !== undefined) maxTokens = Math.min(maxTokens ?? cap, cap);
@@ -135,18 +115,13 @@ export class OpenAITransport {
     }
   }
 
-  /**
-   * Stream chat completions as SSE.
-   *
-   * Yields text deltas. The caller is responsible for buffering the first chunk
-   * so a pre-first-token failure can still be rerouted invisibly.
-   */
+  /** Stream chat completions as SSE, yielding text deltas. */
   async *stream(
     provider: ProviderConfig,
     creds: Credentials,
     modelId: string,
     req: GenerateRequest,
-  ): AsyncGenerator<string, { usage?: ChatResult["usage"]; headers: Headers }, void> {
+  ): AsyncGenerator<string, StreamMeta, void> {
     const url = joinUrl(this.baseUrl(provider, creds), "/chat/completions");
     const { signal, cancel } = this.signal(req.signal);
 
@@ -171,7 +146,7 @@ export class OpenAITransport {
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
-      let usage: ChatResult["usage"];
+      let usage: StreamMeta["usage"];
 
       while (true) {
         const { done, value } = await reader.read();

@@ -1,5 +1,5 @@
-import type { ProviderConfig, ReportedQuota } from "./types.js";
-import { parseDuration, toNum } from "./util.js";
+import type { ProviderConfig, ReportedQuota } from "../types/index.js";
+import { parseDuration, toNum } from "../utils/index.js";
 
 type HeaderBag = Headers | Record<string, string>;
 
@@ -15,12 +15,8 @@ function h(bag: HeaderBag, name: string): string | undefined {
   return undefined;
 }
 
-/**
- * Parse rate-limit headers into a quota snapshot.
- *
- * Header harvesting is free and always fresh: it rides along on responses the
- * router was already making. No probe request is ever needed.
- */
+/** Parse rate-limit headers into a quota snapshot. Rides along on responses
+ * the router was already making — no probe request is ever needed. */
 export function harvestHeaders(
   provider: ProviderConfig,
   headers: HeaderBag,
@@ -30,10 +26,8 @@ export function harvestHeaders(
   switch (provider.quota.dialect) {
     // -----------------------------------------------------------------------
     case "groq": {
-      // Documented and counter-intuitive:
-      //   x-ratelimit-*-requests  ALWAYS means requests per DAY
-      //   x-ratelimit-*-tokens    ALWAYS means tokens per MINUTE
-      // RPM is not exposed at all and must be counted locally.
+      // Counter-intuitive but documented: *-requests is per DAY, *-tokens is
+      // per MINUTE. RPM is not exposed and must be counted locally.
       const reqRemaining = toNum(h(headers, "x-ratelimit-remaining-requests"));
       const reqLimit = toNum(h(headers, "x-ratelimit-limit-requests"));
       const tokRemaining = toNum(h(headers, "x-ratelimit-remaining-tokens"));
@@ -60,8 +54,7 @@ export function harvestHeaders(
 
     // -----------------------------------------------------------------------
     case "sambanova": {
-      // The only provider that exposes BOTH minute and day windows, which makes
-      // it the best fixture for testing the ledger's window handling.
+      // The only provider that exposes BOTH minute and day windows.
       const minRemaining = toNum(h(headers, "x-ratelimit-remaining-requests"));
       const minLimit = toNum(h(headers, "x-ratelimit-limit-requests"));
       const dayRemaining = toNum(h(headers, "x-ratelimit-remaining-requests-day"));
@@ -126,14 +119,9 @@ export function harvestHeaders(
 }
 
 /**
- * Mine a 429 response body for real numbers.
- *
- * Groq embeds the truth in prose:
- *   "Rate limit reached for model X ... Limit 200000, Used 199336,
- *    Requested 1524. Please try again in 6m11.52s"
- *
- * For providers with no usable headers this is the only honest disclosure of
- * daily consumption they ever make.
+ * Mine a 429 body for real numbers — Groq embeds them in prose:
+ * "... Limit 200000, Used 199336, Requested 1524. Please try again in 6m11.52s".
+ * For providers with no usable headers this is the only disclosure they make.
  */
 export function mine429(body: string): ReportedQuota | undefined {
   if (!body) return undefined;

@@ -1,11 +1,7 @@
 /**
- * Token estimation.
- *
- * No tokenizer is bundled — every provider here uses a different one, and
- * shipping tiktoken for a routing decision is not worth the weight. The
- * estimate is deliberately conservative (over-counts) because the cost of
- * under-counting is routing an oversized prompt into GitHub Models' hard
- * 8K input cap and eating a failed request.
+ * Token estimation. No tokenizer is bundled — every provider uses a different
+ * one. Deliberately over-counts: under-counting eats a failed request against
+ * a hard input cap.
  */
 
 const CHARS_PER_TOKEN = 3.6; // conservative; real English is ~4
@@ -26,11 +22,8 @@ export function estimateRequestTokens(prompt: string, system?: string): number {
 }
 
 /**
- * Rough neuron cost for Cloudflare Workers AI.
- *
- * Cloudflare meters GPU compute, not requests, and the per-model rate varies
- * sharply. This is an estimate and is always reported with low confidence —
- * the alternative (faking a request count) would silently corrupt the ledger.
+ * Rough neuron cost for Cloudflare Workers AI, which meters GPU compute rather
+ * than requests. Always low confidence; faking a request count would be worse.
  */
 export function estimateNeurons(modelId: string, totalTokens: number): number {
   const perKTokens = /120b|70b|72b|large/i.test(modelId)

@@ -1,45 +1,19 @@
-import { tierRank } from "./families.js";
-import type { Ledger } from "./ledger.js";
-import { estimateRequestTokens } from "./tokens.js";
+import type { Ledger } from "../quota/ledger.js";
+import { estimateRequestTokens } from "../quota/tokens.js";
+import { tierRank } from "../providers/families.js";
 import type {
   DiscoveredModel,
   GenerateRequest,
   ProviderConfig,
-  RouterConfig,
+  ProviderRuntime,
+  Route,
+  SelectionInput,
+  SelectionResult,
   Skipped,
   StateStore,
   Tier,
-} from "./types.js";
-import { clamp, ewma } from "./util.js";
-
-export interface Route {
-  provider: ProviderConfig;
-  model: DiscoveredModel;
-  score: number;
-  headroomRatio: number;
-}
-
-export interface ProviderRuntime {
-  disabled?: string;
-  cooldownUntil?: number;
-  latencyMs?: number;
-  successes: number;
-  failures: number;
-}
-
-export interface SelectionInput {
-  request: GenerateRequest;
-  providers: ProviderConfig[];
-  models: Map<string, DiscoveredModel[]>;
-  runtime: Map<string, ProviderRuntime>;
-  config: Required<Pick<RouterConfig, "mode" | "keylessFallback" | "allowPromptLogging" | "affinity">>;
-  region?: string;
-}
-
-export interface SelectionResult {
-  routes: Route[];
-  skipped: Skipped[];
-}
+} from "../types/index.js";
+import { clamp } from "../utils/index.js";
 
 const REGION_ALIASES: Record<string, string[]> = {
   EU: ["EU", "AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR", "DE", "GR", "HU", "IE", "IT", "LV", "LT", "LU", "MT", "NL", "PL", "PT", "RO", "SK", "SI", "ES", "SE"],
@@ -68,10 +42,8 @@ export class Selector {
   }
 
   /**
-   * Build the ranked candidate list.
-   *
-   * Filters are hard constraints — a route that fails any of them is dropped
-   * with a reason so `status()` and the error trail can explain the decision.
+   * Build the ranked candidate list. Filters are hard constraints; a dropped
+   * route always carries a reason so the error trail can explain it.
    */
   async select(input: SelectionInput): Promise<SelectionResult> {
     const { request, providers, models, runtime, config, region } = input;
@@ -131,8 +103,7 @@ export class Selector {
         continue;
       }
 
-      // Concurrency-gated providers are checked at execution time (the
-      // semaphore must be held across the call), but a full semaphore is
+      // Held across the call at execution time, but a full semaphore is
       // visible here and worth skipping early.
       if (provider.maxConcurrent !== undefined) {
         const key = `sem:${provider.id}`;
@@ -174,8 +145,8 @@ export class Selector {
           continue;
         }
 
-        // Hard per-request caps are separate from the context window.
-        // GitHub Models advertises huge contexts but caps 8K in / 4K out.
+        // Separate from the context window: GitHub Models advertises huge
+        // contexts but caps 8K in / 4K out.
         const capIn = provider.perRequestCaps?.maxInput;
         if (capIn !== undefined && estTokens > capIn) {
           skipped.push({
@@ -212,13 +183,9 @@ export class Selector {
       }
     }
 
-    // Session affinity: keep follow-up calls on the same family so a downstream
-    // JSON.parse does not break intermittently when request 1 lands on an 8B
-    // model and request 2 on gpt-oss-120b.
-    //
-    // This is a HARD restriction, not a score nudge: a nudge still lets the
-    // weighted-random pick jump families, which is exactly the failure it was
-    // meant to prevent. The pool falls back to every route only once the
+    // Affinity keeps follow-ups on one family so output stays consistent. It
+    // is a HARD restriction, not a score nudge — a nudge still lets the
+    // weighted pick jump families. Falls back to all routes only when the
     // pinned family has no capacity left anywhere.
     if (config.affinity && request.sessionId && candidates.length > 0) {
       const fam = await this.affinityFamily(request.sessionId);
@@ -272,8 +239,7 @@ export class Selector {
     const total = (rt?.successes ?? 0) + (rt?.failures ?? 0);
     const reliability = total < 3 ? 0.85 : clamp((rt!.successes + 1) / (total + 2), 0.1, 1);
 
-    // Estimated headroom is a guess, not a fact. Discount it so a provider with
-    // real reported headroom wins ties against one that only looks healthy.
+    // Discount guesses so reported headroom wins ties.
     const confidence = source === "reported" ? 1 : source === "mined" ? 0.95 : 0.85;
 
     const headroomFactor = 0.25 + 0.75 * headroomRatio;
@@ -282,13 +248,9 @@ export class Selector {
   }
 
   /**
-   * Weighted random pick among the top N.
-   *
-   * This is load-bearing, not a detail. Deterministic top-1 drains Groq to
-   * zero, then Gemini, then NVIDIA — ending the day on the worst provider with
-   * everything else exhausted. Weighting by remaining capacity spreads
-   * consumption proportionally and keeps every tier alive longer. When pooling
-   * a dozen small budgets, the distribution IS the value proposition.
+   * Weighted random pick among the top N. Load-bearing: deterministic top-1
+   * drains providers one at a time and ends the day on the worst one, while
+   * weighting by remaining capacity keeps every tier alive longer.
    */
   pick(routes: Route[], topN = 4): Route | undefined {
     if (routes.length === 0) return undefined;
@@ -312,8 +274,7 @@ export class Selector {
       out.push(first);
       remaining.splice(remaining.indexOf(first), 1);
     }
-    // Prefer a different provider for the fallback so a provider-wide outage
-    // does not consume every attempt.
+    // Prefer a different provider so one outage cannot eat every attempt.
     for (const r of remaining) {
       if (out.length >= maxAttempts) break;
       if (out.some((o) => o.provider.id === r.provider.id)) continue;
@@ -326,5 +287,3 @@ export class Selector {
     return out;
   }
 }
-
-export { ewma };

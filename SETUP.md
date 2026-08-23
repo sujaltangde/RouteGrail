@@ -43,11 +43,7 @@ pnpm install
 
 # then
 npm run build          # or: yarn build / pnpm build
-npm run selftest       # or: yarn selftest / pnpm selftest
-npm run e2etest        # or: yarn e2etest / pnpm e2etest
 ```
-
-Both suites run without network access or API keys.
 
 ---
 
@@ -160,29 +156,47 @@ npx tsx examples/04-advanced.ts   # affinity, tiers, privacy filtering
 
 ```
 src/
-├── index.ts              Public exports
-├── router.ts             Router class — generate / stream / status
-├── types.ts              All type definitions
-├── errors.ts             Error classes + the taxonomy classifier
-├── registry/
-│   └── providers.ts      13 providers as DATA, not code
-├── families.ts           Canonical family patterns + tier mapping
-├── discovery.ts          Catalog fetch, key validation, FREE-MODEL FILTER
-├── ledger.ts             Quota accounting: anchors, reservations, windows
-├── harvester.ts          Header dialects + 429 body miner
-├── selector.ts           Hard filters, scoring, weighted-random pick
-├── executor.ts           Attempt loop, error branching, ledger updates
+├── index.ts                  Public exports
+├── core/
+│   ├── router.ts             Router class — generate / stream / status
+│   ├── selector.ts           Hard filters, scoring, weighted-random pick
+│   ├── executor.ts           Attempt loop, error branching, ledger updates
+│   └── discovery.ts          Catalog fetch, key validation, FREE-MODEL FILTER
+├── quota/
+│   ├── ledger.ts             Quota accounting: anchors, reservations, windows
+│   ├── harvester.ts          Header dialects + 429 body miner
+│   └── tokens.ts             Token + neuron estimation
+├── providers/
+│   ├── registry.ts           14 providers as DATA, not code
+│   └── families.ts           Canonical family patterns + tier mapping
 ├── transport/
-│   └── openai.ts         One OpenAI-compatible transport for all providers
+│   └── openai.ts             One OpenAI-compatible transport for all providers
 ├── store/
-│   └── memory.ts         Default StateStore
-├── tokens.ts             Token + neuron estimation
-├── util.ts               Window keys, timezone math, duration parsing
-├── selftest.ts           64 offline assertions
-└── e2etest.ts            46 mocked-HTTP assertions
+│   └── memory.ts             Default StateStore
+├── errors/
+│   ├── classes.ts            Error classes
+│   ├── classify.ts           The taxonomy classifier + cooldown policy
+│   └── index.ts
+├── types/                    Every shared type. No interfaces, types only.
+│   ├── provider.ts           ProviderConfig, Limits, FreeFilter, Scope
+│   ├── model.ts              Family, DiscoveredModel
+│   ├── quota.ts              Headroom, ReportedQuota, QuotaAnchor, Reservation
+│   ├── request.ts            GenerateRequest / GenerateResponse / StreamChunk
+│   ├── routing.ts            Route, ProviderRuntime, Selection + Executor deps
+│   ├── status.ts             ProviderStatus, StatusReport
+│   ├── config.ts             RouterConfig and its resolved form
+│   ├── store.ts              StateStore
+│   ├── transport.ts          ChatResult, HttpFailure, CatalogEntry
+│   ├── error.ts              ErrorClass
+│   └── index.ts              Barrel
+└── utils/
+    ├── time.ts               Window keys, timezone math, duration parsing
+    ├── url.ts                URL joining and {accountId} substitution
+    ├── number.ts             Parsing, clamping, EWMA
+    └── index.ts
 ```
 
-**Reading order if you're picking this up cold:** `types.ts` → `registry/providers.ts` → `ledger.ts` → `selector.ts` → `executor.ts`. The ledger is where the real design lives.
+**Reading order if you're picking this up cold:** `types/` → `providers/registry.ts` → `quota/ledger.ts` → `core/selector.ts` → `core/executor.ts`. The ledger is where the real design lives.
 
 ---
 
@@ -296,4 +310,4 @@ npm run clean && npm run build     # or: yarn clean && yarn build / pnpm clean &
 npm publish --access public        # or: yarn npm publish --access public / pnpm publish --access public
 ```
 
-`files` is limited to `dist`, `README.md` and `SETUP.md`, so tests and examples stay out of the tarball.
+`files` is limited to `dist`, `README.md` and `SETUP.md`.

@@ -1,0 +1,12 @@
+export type ErrorClass =
+  | "RATE_LIMITED"
+  | "QUOTA_EXHAUSTED"
+  | "AUTH"
+  | "REGION_BLOCKED"
+  | "CONTEXT_LENGTH_EXCEEDED"
+  | "INVALID_REQUEST"
+  | "MODEL_NOT_FOUND"
+  | "SERVER"
+  | "TIMEOUT"
+  | "NETWORK"
+  | "UNKNOWN";

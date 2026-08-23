@@ -1,15 +1,10 @@
-import type { ProviderConfig } from "../types.js";
+import type { ProviderConfig } from "../types/index.js";
 
 /**
- * Bundled provider registry.
- *
- * Every entry was checked against provider documentation in August 2026.
- * These numbers are SEEDS. They are the floor the ledger starts from and are
- * overwritten by live headers or quota endpoints the moment real data arrives.
- * Re-verify on a schedule; free tiers change monthly.
- *
- * Notable finding: Cloudflare Workers AI and Cohere both ship OpenAI-compatible
- * endpoints, so every provider here speaks one wire format. No custom adapters.
+ * Bundled provider registry, verified against provider docs in August 2026.
+ * The limits are SEEDS — the floor the ledger starts from, overwritten by live
+ * data on first response. Re-verify on a schedule; free tiers change monthly.
+ * Every provider here speaks the OpenAI wire format, so there are no adapters.
  */
 export const REGISTRY: ProviderConfig[] = [
   // -------------------------------------------------------------------------

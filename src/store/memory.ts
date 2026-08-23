@@ -1,17 +1,14 @@
-import type { StateStore } from "../types.js";
+import type { StateStore } from "../types/index.js";
 
-interface Entry {
+type Entry = {
   value: string;
   expiresAt: number;
-}
+};
 
 /**
- * Default single-process store.
- *
- * The StateStore seam exists so Lambda / Vercel / multi-container deploys can
- * swap in Redis. Without it, N instances each rediscover limits via 429s.
- * All methods are async from day one — retrofitting async selection after the
- * selector assumes sync reads is painful.
+ * Default single-process store. The StateStore seam lets Lambda / Vercel /
+ * multi-container deploys swap in Redis instead of rediscovering limits via
+ * 429s in every instance.
  */
 export class MemoryStore implements StateStore {
   private data = new Map<string, Entry>();
@@ -54,8 +51,7 @@ export class MemoryStore implements StateStore {
   async incr(key: string, by: number, ttlMs: number): Promise<number> {
     const cur = this.live(key);
     const next = (cur ? Number(cur.value) : 0) + by;
-    // Preserve the original expiry so a counter's window does not slide forward
-    // every time it is touched.
+    // Preserve the original expiry so the window does not slide forward.
     const expiresAt = cur ? cur.expiresAt : Date.now() + ttlMs;
     this.data.set(key, { value: String(next), expiresAt });
     return next;

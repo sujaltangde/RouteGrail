@@ -1,26 +1,40 @@
-import { Discovery } from "./discovery.js";
-import { AllProvidersFailedError, ConfigError, NoRouteError, classifyHttp, classifyThrown, cooldownMs, shouldCascade } from "./errors.js";
-import { Executor } from "./executor.js";
-import { FAMILIES } from "./families.js";
-import { Ledger } from "./ledger.js";
-import { REGISTRY } from "./registry/providers.js";
-import { Selector, type ProviderRuntime, type Route } from "./selector.js";
-import { MemoryStore } from "./store/memory.js";
-import { estimateRequestTokens } from "./tokens.js";
-import { OpenAITransport, type Credentials } from "./transport/openai.js";
+import {
+  AllProvidersFailedError,
+  ConfigError,
+  NoRouteError,
+  classifyHttp,
+  classifyThrown,
+  cooldownMs,
+  shouldCascade,
+} from "../errors/index.js";
+import { FAMILIES } from "../providers/families.js";
+import { REGISTRY } from "../providers/registry.js";
+import { Ledger } from "../quota/ledger.js";
+import { estimateRequestTokens } from "../quota/tokens.js";
+import { MemoryStore } from "../store/memory.js";
+import { OpenAITransport } from "../transport/openai.js";
 import type {
+  AttemptRecord,
+  Credentials,
   DiscoveredModel,
   GenerateRequest,
   GenerateResponse,
+  Logger,
   ProviderConfig,
+  ProviderRuntime,
   ProviderStatus,
+  ResolvedRouterConfig,
   RouterConfig,
+  Skipped,
   StateStore,
   StatusReport,
   StreamChunk,
   Tier,
-} from "./types.js";
-import { nowIso } from "./util.js";
+} from "../types/index.js";
+import { nowIso } from "../utils/index.js";
+import { Discovery } from "./discovery.js";
+import { Executor } from "./executor.js";
+import { Selector } from "./selector.js";
 
 const DEFAULTS = {
   mode: "development" as const,
@@ -33,15 +47,9 @@ const DEFAULTS = {
 };
 
 /**
- * RouteGrail — a multi-provider router over permanently-free LLM tiers.
- *
- * Give it whatever API keys you have. It discovers which models each key can
- * actually reach, tracks how much free capacity remains across every provider,
- * and routes each request to a live one — falling back to the same model family
- * on a different provider rather than to a worse model.
- *
- * Positioning: free-tier quality with paid-tier-like uptime. Routing solves
- * availability, not capability.
+ * A multi-provider router over permanently-free LLM tiers. Discovers what each
+ * key can reach, tracks remaining capacity, and falls back to the same model
+ * family on a different provider rather than to a worse model.
  */
 export class Router {
   private readonly registry: ProviderConfig[];
@@ -57,20 +65,8 @@ export class Router {
   private readonly models = new Map<string, DiscoveredModel[]>();
   private readonly scopeIds = new Map<string, string>();
 
-  private readonly cfg: Required<
-    Pick<
-      RouterConfig,
-      | "mode"
-      | "keylessFallback"
-      | "allowPromptLogging"
-      | "affinity"
-      | "maxAttempts"
-      | "timeoutMs"
-      | "discoveryTtlMs"
-    >
-  > & { region?: string };
-
-  private readonly log: NonNullable<RouterConfig["logger"]>;
+  private readonly cfg: ResolvedRouterConfig;
+  private readonly log: Logger;
   private discoveryPromise?: Promise<void>;
   private activeProviders: ProviderConfig[] = [];
 
@@ -125,10 +121,7 @@ export class Router {
   // Setup
   // -------------------------------------------------------------------------
 
-  /**
-   * Resolve credentials from explicit config, falling back to environment
-   * variables. `new Router()` with zero config picks up whatever is present.
-   */
+  /** Explicit config first, then env vars. `new Router()` picks up whatever is set. */
   private resolveCredentials(explicit?: RouterConfig["providers"]): void {
     const env = typeof process !== "undefined" ? process.env : ({} as Record<string, string>);
 
@@ -152,8 +145,7 @@ export class Router {
       const usable =
         provider.keyless || provider.auth.type === "none" ? true : Boolean(apiKey);
 
-      // Cloudflare's base URL embeds the account ID; without it there is no
-      // valid endpoint to call.
+      // Cloudflare's base URL embeds the account ID — no ID, no endpoint.
       if (provider.envAccountId && !accountId) {
         if (apiKey) {
           this.runtime.set(provider.id, {
@@ -175,13 +167,9 @@ export class Router {
   }
 
   /**
-   * Scope is not "API key".
-   *
-   * Groq bills per organization, Gemini per project, Cloudflare per account,
-   * GitHub per user. Two keys on one Groq org share one budget, so the ledger
-   * must key on the billing entity, not the credential. Without a way to see
-   * the real org ID, a stable hash of the credential is the best available
-   * proxy — it at least stops one key from being counted twice.
+   * Scope is the billing entity, not the key: two Groq keys on one org share a
+   * budget. With no way to read the real org ID, a stable hash of the
+   * credential is the best proxy available.
    */
   private deriveScopeId(
     provider: ProviderConfig,
@@ -259,10 +247,7 @@ export class Router {
     });
 
     if (routes.length === 0) {
-      throw new NoRouteError(
-        skipped,
-        this.explainNoRoute(skipped, request),
-      );
+      throw new NoRouteError(skipped, this.explainNoRoute(skipped, request));
     }
 
     const ordered = this.selector.order(routes, this.cfg.maxAttempts);
@@ -270,13 +255,9 @@ export class Router {
   }
 
   /**
-   * Stream a completion.
-   *
-   * Provider switching is only possible before the first chunk reaches the
-   * caller, so the first chunk is buffered internally: a failure before any
-   * output is emitted reroutes invisibly. Once output has started, errors
-   * surface — splicing another model's continuation into a partial response
-   * would produce text no single model ever wrote.
+   * Stream a completion. The first chunk is buffered so a failure before any
+   * output reroutes invisibly. Once output has started errors surface —
+   * splicing in another model would produce text no model ever wrote.
    */
   async *stream(request: GenerateRequest): AsyncGenerator<StreamChunk, void, void> {
     if (!request?.prompt) throw new ConfigError("`prompt` is required.");
@@ -301,7 +282,7 @@ export class Router {
     }
 
     const ordered = this.selector.order(routes, this.cfg.maxAttempts);
-    const trail: Array<{ provider: string; model: string; errorClass?: string; latencyMs: number }> = [];
+    const trail: AttemptRecord[] = [];
     const estTokens = estimateRequestTokens(request.prompt, request.system);
 
     for (const route of ordered) {
@@ -342,8 +323,7 @@ export class Router {
           }
 
           if (buffered === undefined) {
-            // Hold the first chunk back so a failure that happens immediately
-            // after it can still be rerouted without the caller seeing output.
+            // Hold it back so an immediate failure can still reroute unseen.
             buffered = next.value;
             continue;
           }
@@ -384,15 +364,12 @@ export class Router {
       }
     }
 
-    throw new AllProvidersFailedError(trail as never, skipped);
+    throw new AllProvidersFailedError(trail, skipped);
   }
 
   /**
-   * Snapshot of every provider's state and remaining capacity.
-   *
-   * Async because the state store may be Redis. Surfacing `source` and `reason`
-   * is the point: it tells you which numbers are real measurements and which
-   * are local estimates, and why anything is switched off.
+   * Snapshot of every provider's state and remaining capacity. `source` and
+   * `reason` say which numbers are measured vs estimated, and why anything is off.
    */
   async status(): Promise<StatusReport> {
     await this.ready();
@@ -457,9 +434,7 @@ export class Router {
       };
     }
 
-    // Family view: how many providers can serve each family, and how many of
-    // those are live right now. Six routes to one family is the redundancy
-    // that makes the whole thing work.
+    // Family view: routes per family, and how many are live right now.
     const families: StatusReport["families"] = {};
     for (const [providerId, models] of this.models) {
       const state = providers[providerId]?.state;
@@ -505,10 +480,7 @@ export class Router {
   }
 
   /** Turn a pile of skip reasons into one actionable sentence. */
-  private explainNoRoute(
-    skipped: Array<{ reason: string; provider: string; detail?: string }>,
-    request: GenerateRequest,
-  ): string {
+  private explainNoRoute(skipped: Skipped[], request: GenerateRequest): string {
     const counts = new Map<string, number>();
     for (const s of skipped) counts.set(s.reason, (counts.get(s.reason) ?? 0) + 1);
 
