@@ -1,0 +1,15 @@
+node_modules/
+dist/
+dist-examples/
+.env
+.env.local
+*.log
+
+# Yarn Plug'n'Play is Yarn-only — this repo uses node_modules for npm/yarn/pnpm
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions

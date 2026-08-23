@@ -1,0 +1,47 @@
+{
+  "name": "routegrail",
+  "version": "0.1.0",
+  "description": "Multi-provider router over permanently-free LLM tiers. Quota-aware failover across Groq, Gemini, NVIDIA, Mistral, OpenRouter, Cloudflare, Cohere, Z.ai and more.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "SETUP.md"
+  ],
+  "engines": {
+    "node": ">=18.17"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepublishOnly": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json",
+    "selftest": "tsc -p tsconfig.json && node dist/selftest.js",
+    "e2etest": "tsc -p tsconfig.json && node dist/e2etest.js"
+  },
+  "keywords": [
+    "llm",
+    "router",
+    "free-tier",
+    "groq",
+    "gemini",
+    "openrouter",
+    "fallback",
+    "rate-limit",
+    "quota"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "tsx": "^4.23.12",
+    "typescript": "^5.6.3"
+  }
+}
