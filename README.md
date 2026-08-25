@@ -2,7 +2,7 @@
 
 **A quota-aware router over permanently-free LLM tiers.**
 
-Give it whatever free API keys you have. It discovers which models each key can actually reach, tracks how much free capacity remains across every provider, and routes each request to a live one — falling back to *the same model family on a different provider* rather than to a worse model.
+Give it whatever free API keys you have. It discovers which models each key can actually reach, tracks how much free capacity remains across every provider, and routes each request to a live one, falling back to *the same model family on a different provider* rather than to a worse model.
 
 ```ts
 import { Router } from "routegrail";
@@ -26,7 +26,7 @@ console.log(res.text, "←", res.provider, res.model);
 - **Concurrency.** These tiers cap at 1–40 RPM. This is a single-user-shaped resource pool. Ten simultaneous users will queue or fail.
 - **Terms of service.** NVIDIA (dev/eval only) and Cohere (non-commercial only) are gated behind `mode: "production"`. Gemini and Mistral free tiers may train on your prompts.
 
-The honest positioning is *free-tier quality with paid-tier-like uptime*. Don't let it drift toward "free ChatGPT" — the first person who ships a user-facing product on it and hits nondeterministic output plus a ToS letter will be loud about it.
+The honest positioning is *free-tier quality with paid-tier-like uptime*. Don't let it drift toward "free ChatGPT". The first person who ships a user-facing product on it and hits nondeterministic output plus a ToS letter will be loud about it.
 
 ---
 
@@ -48,7 +48,7 @@ See **[SETUP.md](./SETUP.md)** for where to get each key and how to build from s
 
 ## The core idea
 
-Provider abstraction is a commodity — LiteLLM, the Vercel AI SDK and OpenRouter all do it. What nobody does well is *knowing how much free capacity you have left across providers you personally own, before spending a request to find out.*
+Provider abstraction is a commodity. LiteLLM, the Vercel AI SDK and OpenRouter all do it. What nobody does well is *knowing how much free capacity you have left across providers you personally own, before spending a request to find out.*
 
 The ledger is not a supporting component here. It's the thing being built.
 
@@ -60,31 +60,31 @@ mined      ← parsed out of a 429 body                trust: high
 estimated  ← local counter vs seed limits            trust: low, always available
 ```
 
-A reported value doesn't overwrite the local counter — it becomes an **anchor**: `remaining` at a known local count. Live headroom is then:
+A reported value doesn't overwrite the local counter; it becomes an **anchor**: `remaining` at a known local count. Live headroom is then:
 
 ```
 headroom = anchor.remaining − (currentLocalCount − anchor.atCount)
 ```
 
-When the anchor ages out (2 min for reported, 5 for mined), the ledger falls back to pure local counting. Local counting is the floor; reported values are the upgrade, never the reverse. **Assume the published tables disappear** — Google has already moved per-model limits behind a login, Cerebras killed its permanent free tier outright. The ledger has to work with zero published data.
+When the anchor ages out (2 min for reported, 5 for mined), the ledger falls back to pure local counting. Local counting is the floor; reported values are the upgrade, never the reverse. **Assume the published tables disappear.** Google has already moved per-model limits behind a login, Cerebras killed its permanent free tier outright. The ledger has to work with zero published data.
 
 Every quota number in `status()` carries its `source`, so you always know which figures are measurements and which are guesses.
 
 ### Reservations, not optimistic counting
 
-Each attempt reserves quota *before* the request goes out, then either commits it with the real token count or rolls it back. Rollback only happens for network and timeout failures — a 429 or a 400 *did* consume the provider's counter, and returning that quota would make the ledger believe in capacity the provider has already spent.
+Each attempt reserves quota *before* the request goes out, then either commits it with the real token count or rolls it back. Rollback only happens for network and timeout failures: a 429 or a 400 *did* consume the provider's counter, and returning that quota would make the ledger believe in capacity the provider has already spent.
 
 Without pre-send reservation, N parallel calls all read the same headroom and blow through the limit together.
 
 ### Canonical model families
 
-`gpt-oss-120b` lives on Groq, NVIDIA, SambaNova, Cloudflare, OVHcloud and OpenRouter under six different ID strings. RouteGrail ranks **families** and treats providers as interchangeable routes to one. Fallback means *same model, different provider* — the difference between graceful failover and visible quality collapse.
+`gpt-oss-120b` lives on Groq, NVIDIA, SambaNova, Cloudflare, OVHcloud and OpenRouter under six different ID strings. RouteGrail ranks **families** and treats providers as interchangeable routes to one. Fallback means *same model, different provider*: the difference between graceful failover and visible quality collapse.
 
 Unknown models get a conservative `balanced` default rather than being dropped, so new releases are usable the day they appear.
 
 ### Headroom-weighted random selection
 
-This is load-bearing, not a detail. Deterministic top-1 selection drains Groq to zero, then Gemini, then NVIDIA — ending your day on the worst provider with everything else exhausted. Weighting by remaining capacity spreads consumption proportionally and keeps every tier alive longer. **When you're pooling a dozen small budgets, the distribution is the value proposition.**
+This is load-bearing, not a detail. Deterministic top-1 selection drains Groq to zero, then Gemini, then NVIDIA, ending your day on the worst provider with everything else exhausted. Weighting by remaining capacity spreads consumption proportionally and keeps every tier alive longer. **When you're pooling a dozen small budgets, the distribution is the value proposition.**
 
 ### Never hardcode model lists
 
@@ -94,9 +94,9 @@ Free-tier lineups rotate constantly. A hardcoded `models.ts` is wrong within mon
 
 ## Provider set
 
-All thirteen speak the OpenAI chat-completions wire format — including Cloudflare Workers AI (via `/accounts/{id}/ai/v1`) and Cohere (via its Compatibility API). One transport covers everything; there are no per-provider adapters.
+All thirteen speak the OpenAI chat-completions wire format, including Cloudflare Workers AI (via `/accounts/{id}/ai/v1`) and Cohere (via its Compatibility API). One transport covers everything; there are no per-provider adapters.
 
-### Tier 1 — ship these
+### Tier 1: ship these
 
 | Provider | Free limits (seed) | Quota source | Scope |
 |---|---|---|---|
@@ -109,15 +109,15 @@ All thirteen speak the OpenAI chat-completions wire format — including Cloudfl
 | **SiliconFlow** | 30 RPM / 60K TPM on free models | opaque | account |
 | **SambaNova** | 20 RPM / **20 RPD** / 200K TPD | headers | account |
 
-### Tier 2 — real caveats
+### Tier 2: real caveats
 
 | Provider | Free limits | Caveat |
 |---|---|---|
 | **Cloudflare Workers AI** | 10,000 neurons/day, resets 00:00 UTC | Neuron-denominated; cost is estimated, never authoritative |
 | **Cohere** | 1,000 calls/month total, 20 RPM | **Non-commercial use only** (`productionAllowed: false`) |
-| **Z.ai** | GLM-4.7/4.5/4.6V-Flash free | **1 concurrent request** — gated by semaphore, not counter |
+| **Z.ai** | GLM-4.7/4.5/4.6V-Flash free | **1 concurrent request**, gated by semaphore, not counter |
 
-### Tier 3 — keyless, opt in with `keylessFallback: true`
+### Tier 3: keyless, opt in with `keylessFallback: true`
 
 | Provider | Limits |
 |---|---|
@@ -125,7 +125,7 @@ All thirteen speak the OpenAI chat-completions wire format — including Cloudfl
 | **OVHcloud** | 2 RPM per IP **per model**, EU-hosted, no signup |
 | **Pollinations** | ~10 RPM, no signup |
 
-Off by default: you haven't consented to sending prompts to a provider you never configured. OVHcloud's per-model limit is worth exploiting — 2 RPM across 12 model IDs is ~24 RPM aggregate.
+Off by default: you haven't consented to sending prompts to a provider you never configured. OVHcloud's per-model limit is worth exploiting: 2 RPM across 12 model IDs is ~24 RPM aggregate.
 
 ### Per-provider warnings the SDK enforces for you
 
@@ -150,7 +150,7 @@ type RouterConfig = {
   keylessFallback?: boolean;            // default false
   allowPromptLogging?: boolean;         // default true
   affinity?: boolean;                   // default true
-  region?: string;                      // e.g. "DE" — skips region-blocked providers
+  region?: string;                      // e.g. "DE"; skips region-blocked providers
   maxAttempts?: number;                 // default 3
   timeoutMs?: number;                   // default 60000
   store?: StateStore;                   // default MemoryStore
@@ -160,7 +160,7 @@ type RouterConfig = {
 };
 ```
 
-Every provider is optional. The router works with one key and improves with each one you add. Discovery starts in the background — the constructor never blocks on it.
+Every provider is optional. The router works with one key and improves with each one you add. Discovery starts in the background; the constructor never blocks on it.
 
 ### `generate(request)`
 
@@ -182,7 +182,7 @@ Returns `text`, `provider`, `model`, `family`, `usage`, `latencyMs`, and a `rout
 
 ### `stream(request)`
 
-Async generator of `{ text, provider, model, family, done }`. The first chunk is buffered internally so a failure before any output reaches you reroutes invisibly. Once output has started, errors surface — splicing another model's continuation into a partial response would produce text no single model ever wrote.
+Async generator of `{ text, provider, model, family, done }`. The first chunk is buffered internally so a failure before any output reaches you reroutes invisibly. Once output has started, errors surface. Splicing another model's continuation into a partial response would produce text no single model ever wrote.
 
 ### `status()`
 
@@ -212,9 +212,9 @@ Async (your store may be Redis). Returns per-provider state, remaining capacity 
 import { NoRouteError, AllProvidersFailedError } from "routegrail";
 ```
 
-- **`NoRouteError`** — nothing was eligible before any request was sent. `.message` explains why in one sentence; `.skipped` has the full breakdown.
-- **`AllProvidersFailedError`** — every attempt failed. `.trail` lists each provider, model and error class.
-- **`ConfigError`** — no providers configured at all.
+- **`NoRouteError`**: nothing was eligible before any request was sent. `.message` explains why in one sentence; `.skipped` has the full breakdown.
+- **`AllProvidersFailedError`**: every attempt failed. `.trail` lists each provider, model and error class.
+- **`ConfigError`**: no providers configured at all.
 
 ### The error taxonomy
 
@@ -229,7 +229,7 @@ import { NoRouteError, AllProvidersFailedError } from "routegrail";
 | `MODEL_NOT_FOUND` | 404 | invalidate discovery, refresh |
 | `SERVER` / `TIMEOUT` / `NETWORK` | 5xx, abort, ECONNRESET | short cooldown, next route |
 
-**The 400 rule and its exception.** Cascading a malformed request through twelve providers burns twelve quotas to produce the same error twelve times — a 400 means *your request is wrong*, not *their capacity is gone*. But oversized prompts also come back as 400, and those genuinely should try a provider with a larger cap. Collapsing these two into one rule is the most commonly-botched branch in routers of this kind, so RouteGrail splits them and tests both directions.
+**The 400 rule and its exception.** Cascading a malformed request through twelve providers burns twelve quotas to produce the same error twelve times. A 400 means *your request is wrong*, not *their capacity is gone*. But oversized prompts also come back as 400, and those genuinely should try a provider with a larger cap. Collapsing these two into one rule is the most commonly-botched branch in routers of this kind, so RouteGrail splits them and tests both directions.
 
 ---
 
@@ -250,7 +250,7 @@ type StateStore = {
 
 Selection is async throughout so this seam costs nothing to use.
 
-**Scope is not "API key."** Groq bills per organization, Gemini per project, Cloudflare per account, GitHub per user. Two Groq keys share one budget — keying the ledger by credential would double-count headroom that doesn't exist. The registry declares each provider's real billing scope.
+**Scope is not "API key."** Groq bills per organization, Gemini per project, Cloudflare per account, GitHub per user. Two Groq keys share one budget. Keying the ledger by credential would double-count headroom that doesn't exist. The registry declares each provider's real billing scope.
 
 ---
 
@@ -258,7 +258,7 @@ Selection is async throughout so this seam costs nothing to use.
 
 With all Tier 1 keys configured, outside the EU: roughly **3,000–6,000 requests/day**, plus NVIDIA's uncapped daily allowance and Mistral's ~1B monthly token budget.
 
-Treat that as nominal, not achievable in a burst — per-minute limits bind long before daily ones. Groq's daily allowance at 30 RPM would need hours of continuous saturation to exhaust. The honest claim is that a solo developer doing normal work essentially never hits a wall, which is a different statement from a big number in a table.
+Treat that as nominal, not achievable in a burst. Per-minute limits bind long before daily ones. Groq's daily allowance at 30 RPM would need hours of continuous saturation to exhaust. The honest claim is that a solo developer doing normal work essentially never hits a wall, which is a different statement from a big number in a table.
 
 ---
 

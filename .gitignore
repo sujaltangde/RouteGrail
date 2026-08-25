@@ -4,7 +4,7 @@ dist-examples/
 .env
 .env.local
 *.log
-
+RouteGrailKB.md
 # Yarn Plug'n'Play is Yarn-only — this repo uses node_modules for npm/yarn/pnpm
 .pnp.*
 .yarn/*
