@@ -1,6 +1,6 @@
 {
   "name": "routegrail",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Multi-provider router over permanently-free LLM tiers. Quota-aware failover across Groq, Gemini, NVIDIA, Mistral, OpenRouter, Cloudflare, Cohere, Z.ai and more.",
   "type": "module",
   "main": "./dist/index.js",
@@ -14,7 +14,8 @@
   "files": [
     "dist",
     "README.md",
-    "SETUP.md"
+    "SETUP.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=18.17"

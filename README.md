@@ -276,4 +276,4 @@ const router = new Router({ registry });
 
 ## License
 
-MIT
+[MIT](LICENSE) © Sujal Tangde
